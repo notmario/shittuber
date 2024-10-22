@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::fs;
 use toml::Table;
 
-const BALLS_SIZE: usize = 8;
+const BALLS_SIZE: usize = 2;
 
 static mut BALLS: [f32; BALLS_SIZE] = [0.;BALLS_SIZE];
 static mut BALLSPOINT: usize = 0;
@@ -82,51 +82,226 @@ async fn my_load_texture(s: String, tex: &mut HashMap<String, Texture2D>, mode: 
     }
 }
 
+const FONT_KERN: [i32; 96] = [
+    4, 3, 2, 0, 0, 0, 0, 3, 2, 2, 1, 1, 3, 1, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 3, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 2, 0, 1,
+    2, 0, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0,
+];
+const FONT_Y_OFF: [i32; 96] = [
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 3, 0, 0, 0, 0, 0, 3, 3, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0,
+];
+
+fn draw_text_cool(tx: &Texture2D, t: &str, x: i32, y: i32, c: Color, scale: i32) {
+    if scale <= 0 { return }
+    let mut back_off = 0;
+    for (i, ch) in t.chars().enumerate() {
+        let ind = ch as u32;
+        let ind = if ind >= 32 && ind <= 127 {
+            ind - 32
+        } else {
+            95
+        };
+        let (sx, sy) = (ind % 16, ind / 16);
+
+        let kern = FONT_KERN[ind as usize];
+        let yoff = FONT_Y_OFF[ind as usize];
+
+        draw_texture_ex(
+            &tx,
+            (x + (i as i32 * 12 - kern - back_off) * scale) as f32,
+            (y + yoff * scale) as f32,
+            c,
+            DrawTextureParams {
+                dest_size: Some(Vec2 {
+                    x: 12. * scale as f32,
+                    y: 16. * scale as f32,
+                }),
+                source: Some(Rect {
+                    x: sx as f32 * 12.,
+                    y: sy as f32 * 16.,
+                    w: 12.,
+                    h: 16.,
+                }),
+                ..Default::default()
+            },
+        );
+
+        back_off += kern * 2;
+    }
+}
+
+fn draw_text_cool_c(tx: &Texture2D, t: &str, x: i32, y: i32, c: Color, scale: i32) {
+    if scale <= 0 { return }
+    let mut total_width = 0;
+    for ch in t.chars() {
+        let ind = ch as u32;
+        let ind = if ind >= 32 && ind <= 127 {
+            ind - 32
+        } else {
+            95
+        };
+        let kern = FONT_KERN[ind as usize];
+        total_width += 12 - kern * 2;
+    }
+
+    draw_text_cool(tx, t, x - total_width * scale / 2, y, c, scale);
+}
+
+fn draw_text_cool_l(tx: &Texture2D, t: &str, x: i32, y: i32, c: Color, scale: i32) {
+    if scale <= 0 { return }
+    let mut total_width = 0;
+    for ch in t.chars() {
+        let ind = ch as u32;
+        let ind = if ind >= 32 && ind <= 127 {
+            ind - 32
+        } else {
+            95
+        };
+        let kern = FONT_KERN[ind as usize];
+        total_width += 12 - kern * 2;
+    }
+
+    draw_text_cool(tx, t, x - total_width * scale, y, c, scale);
+}
+
+fn draw_multiline(tx: &Texture2D, t: &str, x: i32, y: i32, w: i32, c: Color, scale: i32) {
+    if scale <= 0 { return }
+    let mut c_line_width = 0;
+    let mut lines: Vec<usize> = vec![0];
+    let mut line_widths = vec![0];
+    for word in t.split(" ") {
+        let mut my_width = 0;
+        for ch in word.chars() {
+            let ind = ch as u32;
+            let ind = if ind >= 32 && ind <= 127 {
+                ind - 32
+            } else {
+                95
+            };
+            // let (sx, sy) = (ind % 16, ind / 16);
+
+            let kern = FONT_KERN[ind as usize];
+            my_width += 12 - kern * 2;
+        }
+        if c_line_width + my_width < w / scale {
+            c_line_width += my_width + 4;
+            *line_widths.last_mut().expect("should have last") += my_width + 4;
+            *lines.last_mut().expect("should have last") += word.len() + 1
+        } else {
+            *line_widths.last_mut().expect("should have last") -= 4;
+            c_line_width = my_width + 4;
+            line_widths.push(my_width + 4);
+            lines.push(word.len() + 1);
+        }
+    }
+    *line_widths.last_mut().expect("should have last") -= 4;
+    let mut back_off = 0;
+    let mut current_line = 0;
+    let mut ind_off = 0;
+    for (i, ch) in t.chars().enumerate() {
+        if i - ind_off >= lines[current_line] {
+            back_off = 0;
+            ind_off += lines[current_line];
+            current_line += 1;
+        }
+        let ind = ch as u32;
+        let ind = if ind >= 32 && ind <= 127 {
+            ind - 32
+        } else {
+            95
+        };
+        let (sx, sy) = (ind % 16, ind / 16);
+
+        let kern = FONT_KERN[ind as usize];
+        let yoff = FONT_Y_OFF[ind as usize];
+
+        draw_texture_ex(
+            &tx,
+            (x + ((i - ind_off) as i32 * 12 - kern - back_off - line_widths[current_line] / 2) * scale + w / 2) as f32,
+            (y + (yoff + current_line as i32 * 18 - lines.len() as i32 * 9) * scale) as f32,
+            c,
+            DrawTextureParams {
+                dest_size: Some(Vec2 {
+                    x: 12. * scale as f32,
+                    y: 16. * scale as f32,
+                }),
+                source: Some(Rect {
+                    x: sx as f32 * 12.,
+                    y: sy as f32 * 16.,
+                    w: 12.,
+                    h: 16.,
+                }),
+                ..Default::default()
+            },
+        );
+
+        back_off += kern * 2;
+    }
+}
+
+fn image_button(t: &Texture2D, x: f32, y: f32, w: f32, h: f32) -> bool {
+    draw_texture(t, x, y, WHITE);
+
+    let pos = mouse_position();
+    if pos.0 > x && pos.0 < x + w &&
+    pos.1 > y && pos.1 < y + h {
+        draw_texture(t, x, y, Color::from_hex(0xed8796));
+        if is_mouse_button_pressed(MouseButton::Left) {
+            return true
+        }
+    }
+
+    false
+}
+
 #[macroquad::main(window_conf)]
 async fn main() -> std::io::Result<()> {
     let host = cpal::default_host();
     
     let text_col = Color::from_hex(0xcad3f5);
+    let mut textures: HashMap<String, Texture2D> = HashMap::new();
+    let font = my_load_texture("misc_assets/letters.png".into(), &mut textures, FilterMode::Nearest).await.expect("should have");
+    let back_button = my_load_texture("misc_assets/back.png".into(), &mut textures, FilterMode::Nearest).await.expect("should have");
 
-    let mut selected_ind = 0;
+    let selected_ind;
 
     let devs: Vec<cpal::Device> = 
         host.devices().expect("I CANT EVEN")
         .filter(|a| a.supported_input_configs().is_ok_and(|k| k.count() > 0)).collect();
 
-    loop {
+    'outer: loop {
         clear_background(Color::from_hex(0x1e2030));
 
-        draw_text("CHOOSE YOUR AUDIO DEVICE (ARROWS + Z)", 4., 32. - 4., 32., text_col);
-        draw_text("if yours doesnt show up SHOUT AT ME LOUDLY", 4., 64. - 4., 32., text_col);
+        draw_text_cool(&font, "CHOOSE YOUR AUDIO DEVICE", 4, 4, text_col, 2);
+        draw_text_cool(&font, "if yours doesnt show up SHOUT AT ME LOUDLY", 4, 36, text_col, 2);
+
+        let mouse_pos = mouse_position();
+
+        let off_y = 72.;
 
         for (i, d) in devs.iter().enumerate() {
-            let string = if i == selected_ind {
-                format!("=> {}: {}", i, d.name().unwrap_or("MYSTERY SHIT".into()))
-            } else {
-                format!("   {}: {}", i, d.name().unwrap_or("MYSTERY SHIT".into()))
-            };
-            draw_text(&string, 4., (4 + i) as f32 * 32. - 4., 32., text_col);
-        }
-        
-        if is_key_pressed(KeyCode::Z) {
-            next_frame().await;
-            break
-        }
-
-        if is_key_pressed(KeyCode::Down) {
-            if selected_ind == devs.len() - 1 {
-                selected_ind = 0
-            } else {
-                selected_ind += 1
+            let grid_x = (i % 5) as i32;
+            let grid_y = (i / 5) as i32;
+            draw_rectangle(8. + 256. * grid_x as f32, off_y + 4. + 256. * grid_y as f32, 240., 240., text_col);
+            draw_rectangle(12. + 256. * grid_x as f32, off_y + 8. + 256. * grid_y as f32, 232., 232., Color::from_hex(0x1e2030));
+            if mouse_pos.0 > 256. * grid_x as f32 && mouse_pos.0 < 256. * (grid_x + 1) as f32 &&
+                mouse_pos.1 > off_y + 256. * grid_y as f32 && mouse_pos.1 < off_y + 256. * (grid_y + 1) as f32 {
+                draw_rectangle(12. + 256. * grid_x as f32, off_y + 8. + 256. * grid_y as f32, 232., 232., Color::from_hex(0x494d64));
+                if is_mouse_button_pressed(MouseButton::Left) {
+                    selected_ind = i;
+                    next_frame().await;
+                    break 'outer
+                }
             }
-        }
-        if is_key_pressed(KeyCode::Up) {
-            if selected_ind == 0 {
-                selected_ind = devs.len() - 1
-            } else {
-                selected_ind -= 1
-            }
+            // let string = if i == selected_ind {
+            //     format!("=>  {}: {}", i, d.name().unwrap_or("MYSTERY SHIT".into()))
+            // } else {
+            //     format!("        {}: {}", i, d.name().unwrap_or("MYSTERY SHIT".into()))
+            // };
+            // draw_text_cool(&font, &string, 4, (3 + i) as i32 * 32, text_col, 2);
+            draw_multiline(&font,&d.name().unwrap_or("MYSTERY SHIT".into()), 16 + 256 * grid_x, 200 + 256 * grid_y, 224, text_col, 1);
         }
 
         next_frame().await;
@@ -141,10 +316,9 @@ async fn main() -> std::io::Result<()> {
     let stream = device.build_input_stream(
         &supported_config.into(),
         move |data: &[f32], _: &cpal::InputCallbackInfo| {
-            add_to_balls(data[0].abs());
-            add_to_balls(data[1].abs());
-            add_to_balls(data[2].abs());
-            add_to_balls(data[3].abs());
+            let sum: f32 = data.iter().map(|a| a.abs()).sum();
+            let avg = sum / data.len() as f32;
+            add_to_balls(avg);
         },
         move |_| {
             // uh?
@@ -152,8 +326,6 @@ async fn main() -> std::io::Result<()> {
         Some(Duration::from_millis(1000)) // None=blocking, Some(Duration)=timeout
     ).expect("this should exist");
     stream.play().unwrap();
-    
-    let mut textures: HashMap<String, Texture2D> = HashMap::new();
 
     let avatar_dirs = fs::read_dir("avatars")?
     .map(|res| res.map(|e| e.path()))
@@ -269,7 +441,10 @@ async fn main() -> std::io::Result<()> {
 
     // let mut move_data: Vec<f32> = vec![];
 
-    loop {
+    let mut show_ui = true;
+    let mut show_ui_thingy_timey = 0.;
+
+    'outer: loop {
         let dt = get_frame_time();
         match &mut state {
             State::Select(ind, timer) => {
@@ -277,35 +452,55 @@ async fn main() -> std::io::Result<()> {
 
                 *timer += dt;
 
-                if is_key_pressed(KeyCode::Z) {
-                    state = State::Main(working_paths[*ind].clone());
-                    continue;
-                }
+                // if is_key_pressed(KeyCode::Z) {
+                //     state = State::Main(working_paths[*ind].clone());
+                //     continue;
+                // }
 
-                if is_key_pressed(KeyCode::Down) {
-                    if *ind == working_paths.len() - 1 {
-                        *ind = 0
-                    } else {
-                        *ind += 1
+                // if is_key_pressed(KeyCode::Down) {
+                //     if *ind == working_paths.len() - 1 {
+                //         *ind = 0
+                //     } else {
+                //         *ind += 1
+                //     }
+                // }
+                // if is_key_pressed(KeyCode::Up) {
+                //     if *ind == 0 {
+                //         *ind = working_paths.len() - 1
+                //     } else {
+                //         *ind -= 1
+                //     }
+                // }
+                
+                let mouse_pos = mouse_position();
+                let off_y = 160.;
+        
+                for (i, p) in working_paths.iter().enumerate() {
+                    let grid_x = (i % 5) as i32;
+                    let grid_y = (i / 5) as i32;
+                    draw_rectangle(8. + 256. * grid_x as f32, off_y + 4. + 256. * grid_y as f32, 240., 240., text_col);
+                    draw_rectangle(12. + 256. * grid_x as f32, off_y + 8. + 256. * grid_y as f32, 232., 232., Color::from_hex(0x1e2030));
+                    if mouse_pos.0 > 256. * grid_x as f32 && mouse_pos.0 < 256. * (grid_x + 1) as f32 &&
+                        mouse_pos.1 > off_y + 256. * grid_y as f32 && mouse_pos.1 < off_y + 256. * (grid_y + 1) as f32 {
+                        draw_rectangle(12. + 256. * grid_x as f32, off_y + 8. + 256. * grid_y as f32, 232., 232., Color::from_hex(0x494d64));
+                        if is_mouse_button_pressed(MouseButton::Left) {
+                            *ind = i;
+                            state = State::Main(working_paths[*ind].clone());
+                            show_ui = true;
+                            next_frame().await;
+                            continue 'outer
+                        }
                     }
+                    let t= &avatars[p].speak;
+                    draw_texture_ex(t, 64. + 256. * grid_x as f32, off_y + 60. + 256. * grid_y as f32, WHITE, DrawTextureParams {
+                        dest_size: Some(Vec2 {
+                            x: 128., y: 128.
+                        }),
+                        ..Default::default()
+                    });
+                    draw_text_cool_c(&font,&p.replace("\\", "/").replace("avatars/", ""), 128 + 256 * grid_x, off_y as i32 + 220 + 256 * grid_y, text_col, 1);
                 }
-                if is_key_pressed(KeyCode::Up) {
-                    if *ind == 0 {
-                        *ind = working_paths.len() - 1
-                    } else {
-                        *ind -= 1
-                    }
-                }
-
-                for (i, path) in working_paths.iter().enumerate() {
-                    let string = if i == *ind {
-                        format!("{}: {} <-", i, path.replace("\\", "/").replace("avatars/", ""))
-                    } else {
-                        format!("{}: {}", i, path.replace("\\", "/").replace("avatars/", ""))
-                    };
-                    draw_text(&string, 4., (6 + i) as f32 * 32. + 4., 32., text_col);
-                }
-                draw_text("arrows + z to select", 4., 160. + 4., 32., text_col);
+                draw_text_cool(&font, "CHOOSE YOUR THING", 4, 128, text_col, 2);
                 let t = *timer;
                 for (i, col) in [
                     0xed8796, 0xee9900, 0xf5a97f, 0xeed49f, 0xa6da95, 0x8bd5ca, 0x91d7e3, 0x7dc4e4, 0x8aadf4, 0xb7bdf8, 0xffffff
@@ -319,6 +514,15 @@ async fn main() -> std::io::Result<()> {
                 }
             }
             State::Main(ref avatar) => {
+                show_ui_thingy_timey += dt;
+                if is_mouse_button_pressed(MouseButton::Left) {
+                    if show_ui_thingy_timey < 0.25 {
+                        show_ui = !show_ui;
+                        show_ui_thingy_timey = 5.;
+                    } else {
+                        show_ui_thingy_timey = 0.;
+                    }
+                }
                 let vol = read_balls();
                 let avatar = avatars.get(avatar).expect("if this doesn't work i swear to fucking god");
                 clear_background(avatar.bgcol);
@@ -364,9 +568,16 @@ async fn main() -> std::io::Result<()> {
                         ..Default::default()
                     });
                 }
-                draw_rectangle(0., 720. - 16., 1280., 16., Color::from_hex(0x222222));
-                draw_rectangle(0., 720. - 16., 1280. * settings.thresh, 16., GRAY);
-                draw_rectangle(0., 720. - 16., 1280. * vol, 16., RED);
+                if show_ui {
+                    draw_rectangle(0., 720. - 16., 1280., 16., Color::from_hex(0x181926));
+                    draw_rectangle(0., 720. - 16., 1280. * settings.thresh, 16., Color::from_hex(0xa5adcb));
+                    draw_rectangle(0., 720. - 16., 1280. * vol, 16., Color::from_hex(0xed8796));
+                    if image_button(&back_button, 16., 16., 64., 64.) {
+                        state = State::Select(0, 0.)
+                    }
+
+                    draw_text_cool_l(&font, "DOUBLE CLICK ANYWHERE TO HIDE/SHOW", 1280 - 2, 720 - 48, RED, 2);
+                }
             }
         }
         next_frame().await;
