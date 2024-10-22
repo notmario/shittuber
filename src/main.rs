@@ -32,7 +32,7 @@ fn read_balls() -> f32 {
 }
 
 enum State {
-    Select(usize, f32),
+    Select(f32),
     Main(String),
     // Settings(Option<String>),
 }
@@ -280,15 +280,19 @@ async fn main() -> std::io::Result<()> {
         let mouse_pos = mouse_position();
 
         let off_y = 72.;
+        let grid_size = 192.;
 
         for (i, d) in devs.iter().enumerate() {
-            let grid_x = (i % 5) as i32;
-            let grid_y = (i / 5) as i32;
-            draw_rectangle(8. + 256. * grid_x as f32, off_y + 4. + 256. * grid_y as f32, 240., 240., text_col);
-            draw_rectangle(12. + 256. * grid_x as f32, off_y + 8. + 256. * grid_y as f32, 232., 232., Color::from_hex(0x1e2030));
-            if mouse_pos.0 > 256. * grid_x as f32 && mouse_pos.0 < 256. * (grid_x + 1) as f32 &&
-                mouse_pos.1 > off_y + 256. * grid_y as f32 && mouse_pos.1 < off_y + 256. * (grid_y + 1) as f32 {
-                draw_rectangle(12. + 256. * grid_x as f32, off_y + 8. + 256. * grid_y as f32, 232., 232., Color::from_hex(0x494d64));
+            let grid_x = (i % 6) as i32;
+            let grid_y = (i / 6) as i32;
+            draw_rectangle(8. + grid_size * grid_x as f32, off_y + 4. + grid_size * grid_y as f32, 
+                grid_size - 16., grid_size - 16., text_col);
+            draw_rectangle(12. + grid_size * grid_x as f32, off_y + 8. + grid_size * grid_y as f32, 
+                grid_size - 24., grid_size - 24., Color::from_hex(0x1e2030));
+            if mouse_pos.0 > grid_size * grid_x as f32 && mouse_pos.0 < grid_size * (grid_x + 1) as f32 &&
+                mouse_pos.1 > off_y + grid_size * grid_y as f32 && mouse_pos.1 < off_y + grid_size * (grid_y + 1) as f32 {
+                draw_rectangle(12. + grid_size * grid_x as f32, off_y + 8. + grid_size * grid_y as f32, 
+                    grid_size - 24., grid_size - 24., Color::from_hex(0x494d64));
                 if is_mouse_button_pressed(MouseButton::Left) {
                     selected_ind = i;
                     next_frame().await;
@@ -301,7 +305,8 @@ async fn main() -> std::io::Result<()> {
             //     format!("        {}: {}", i, d.name().unwrap_or("MYSTERY SHIT".into()))
             // };
             // draw_text_cool(&font, &string, 4, (3 + i) as i32 * 32, text_col, 2);
-            draw_multiline(&font,&d.name().unwrap_or("MYSTERY SHIT".into()), 16 + 256 * grid_x, 200 + 256 * grid_y, 224, text_col, 1);
+            let rgs = grid_size as i32;
+            draw_multiline(&font,&d.name().unwrap_or("MYSTERY SHIT".into()), 16 + rgs * grid_x, 166 + rgs * grid_y, rgs - 32, text_col, 1);
         }
 
         next_frame().await;
@@ -427,7 +432,7 @@ async fn main() -> std::io::Result<()> {
     let mut working_paths: Vec<String> = avatars.keys().cloned().collect();
     working_paths.sort();
 
-    let mut state = State::Select(0, 0.);
+    let mut state = State::Select(0.);
 
     let logo = my_load_texture("misc_assets/logo.png".into(), &mut textures, FilterMode::Nearest).await.expect("expect preshipped assets");
 
@@ -447,7 +452,7 @@ async fn main() -> std::io::Result<()> {
     'outer: loop {
         let dt = get_frame_time();
         match &mut state {
-            State::Select(ind, timer) => {
+            State::Select(timer) => {
                 clear_background(Color::from_hex(0x24273a));
 
                 *timer += dt;
@@ -474,31 +479,39 @@ async fn main() -> std::io::Result<()> {
                 
                 let mouse_pos = mouse_position();
                 let off_y = 160.;
+                let grid_size = 128.;
         
                 for (i, p) in working_paths.iter().enumerate() {
-                    let grid_x = (i % 5) as i32;
-                    let grid_y = (i / 5) as i32;
-                    draw_rectangle(8. + 256. * grid_x as f32, off_y + 4. + 256. * grid_y as f32, 240., 240., text_col);
-                    draw_rectangle(12. + 256. * grid_x as f32, off_y + 8. + 256. * grid_y as f32, 232., 232., Color::from_hex(0x1e2030));
-                    if mouse_pos.0 > 256. * grid_x as f32 && mouse_pos.0 < 256. * (grid_x + 1) as f32 &&
-                        mouse_pos.1 > off_y + 256. * grid_y as f32 && mouse_pos.1 < off_y + 256. * (grid_y + 1) as f32 {
-                        draw_rectangle(12. + 256. * grid_x as f32, off_y + 8. + 256. * grid_y as f32, 232., 232., Color::from_hex(0x494d64));
+                    let grid_x = (i % 10) as i32;
+                    let grid_y = (i / 10) as i32;
+                    draw_rectangle(
+                        8. + grid_size * grid_x as f32, 
+                        off_y + 4. + grid_size * grid_y as f32, 
+                        grid_size - 16., grid_size - 16., text_col
+                    );
+                    draw_rectangle(
+                        12. + grid_size * grid_x as f32, 
+                        off_y + 8. + grid_size * grid_y as f32, 
+                        grid_size - 24., grid_size - 24., Color::from_hex(0x1e2030));
+                    if mouse_pos.0 > grid_size * grid_x as f32 && mouse_pos.0 < grid_size * (grid_x + 1) as f32 &&
+                        mouse_pos.1 > off_y + grid_size * grid_y as f32 && mouse_pos.1 < off_y + grid_size * (grid_y + 1) as f32 {
+                        draw_rectangle(12. + grid_size * grid_x as f32, off_y + 8. + grid_size * grid_y as f32, grid_size - 24., grid_size - 24., Color::from_hex(0x494d64));
                         if is_mouse_button_pressed(MouseButton::Left) {
-                            *ind = i;
-                            state = State::Main(working_paths[*ind].clone());
+                            state = State::Main(working_paths[i].clone());
                             show_ui = true;
                             next_frame().await;
                             continue 'outer
                         }
                     }
                     let t= &avatars[p].speak;
-                    draw_texture_ex(t, 64. + 256. * grid_x as f32, off_y + 60. + 256. * grid_y as f32, WHITE, DrawTextureParams {
+                    draw_texture_ex(t, 32. + grid_size * grid_x as f32, off_y + 24. + grid_size * grid_y as f32, WHITE, DrawTextureParams {
                         dest_size: Some(Vec2 {
-                            x: 128., y: 128.
+                            x: 64., y: 64.
                         }),
                         ..Default::default()
                     });
-                    draw_text_cool_c(&font,&p.replace("\\", "/").replace("avatars/", ""), 128 + 256 * grid_x, off_y as i32 + 220 + 256 * grid_y, text_col, 1);
+                    let rgs = grid_size as i32;
+                    draw_text_cool_c(&font,&p.replace("\\", "/").replace("avatars/", ""), rgs / 2 + rgs * grid_x, off_y as i32 + rgs - 36 + rgs * grid_y, text_col, 1);
                 }
                 draw_text_cool(&font, "CHOOSE YOUR THING", 4, 128, text_col, 2);
                 let t = *timer;
@@ -573,7 +586,7 @@ async fn main() -> std::io::Result<()> {
                     draw_rectangle(0., 720. - 16., 1280. * settings.thresh, 16., Color::from_hex(0xa5adcb));
                     draw_rectangle(0., 720. - 16., 1280. * vol, 16., Color::from_hex(0xed8796));
                     if image_button(&back_button, 16., 16., 64., 64.) {
-                        state = State::Select(0, 0.)
+                        state = State::Select(0.)
                     }
 
                     draw_text_cool_l(&font, "DOUBLE CLICK ANYWHERE TO HIDE/SHOW", 1280 - 2, 720 - 48, RED, 2);
