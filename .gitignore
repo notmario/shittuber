@@ -1,0 +1,3 @@
+/target
+avatars/*
+!avatars/default

@@ -1,0 +1,5 @@
+bgcol = '00FF00'
+talkmode = 'shake:64'
+idlesize = '512x512'
+speaksize = '512x512'
+filtermode = 'nearest'
