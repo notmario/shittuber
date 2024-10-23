@@ -451,6 +451,10 @@ async fn main() -> std::io::Result<()> {
     let mut avatars: HashMap<String, Avatar> = HashMap::new();
     for dir in avatar_dirs {
         if !dir.is_dir() { continue };
+        
+        if let Ok(_) = std::fs::read_to_string(dir.join("disabled")) {
+            continue
+        }
 
         let meta = std::fs::read_to_string(dir.join("meta.toml"));
         let Ok(meta) = meta else { continue };
@@ -476,15 +480,15 @@ async fn main() -> std::io::Result<()> {
         }
 
         let bgcol = if meta.contains_key("bgcol") {
-            meta["bgcol"].as_str().unwrap_or("000000")
+            meta["bgcol"].as_str().unwrap_or("00FF00")
         } else {
-            "000000"
+            "00FF00"
         };
         let bgcol = u32::from_str_radix(bgcol, 16);
         let Ok(bgcol) = bgcol else { continue };
 
         let talkmode = if meta.contains_key("talkmode") {
-            meta["talkmode"].as_str().unwrap_or("000000")
+            meta["talkmode"].as_str().unwrap_or("none")
         } else {
             "none"
         };
