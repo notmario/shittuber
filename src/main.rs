@@ -34,13 +34,12 @@ fn read_balls() -> f32 {
 enum State {
     Select(f32),
     Main(String),
-    // Settings(Option<String>),
+    Settings(Option<String>),
 }
 
 struct Settings {
     thresh: f32,
     coyote_time: f32,
-    move_mod: f32,
 }
 
 enum TalkMode {
@@ -247,13 +246,70 @@ fn image_button(t: &Texture2D, x: f32, y: f32, w: f32, h: f32) -> bool {
     let pos = mouse_position();
     if pos.0 > x && pos.0 < x + w &&
     pos.1 > y && pos.1 < y + h {
-        draw_texture(t, x, y, Color::from_hex(0xed8796));
-        if is_mouse_button_pressed(MouseButton::Left) {
+        draw_texture(t, x, y, Color::from_hex(0xcad3f5));
+        if is_mouse_button_down(MouseButton::Left) {
+            draw_texture(t, x, y, Color::from_hex(0xed8796));
+        }
+        if is_mouse_button_released(MouseButton::Left) {
             return true
         }
     }
 
     false
+}
+
+fn render_guy(avatar: &Avatar, settings: &Settings, vol: f32, coyote_time: &mut f32, dt: f32) {
+    let mut should_speak = vol > settings.thresh;
+    if vol > settings.thresh {
+        *coyote_time = 0.;
+    } else if !should_speak && *coyote_time < settings.coyote_time {
+        should_speak = true;
+        *coyote_time += dt;
+    }
+    if should_speak {
+        let center_x = (1280. - avatar.speaksize.0) / 2.;
+        let center_y = (720. - avatar.speaksize.1) / 2.;
+        match avatar.talkmode {
+            TalkMode::Shake(mag) => {
+                let bounce_mag = vol.sqrt() * mag;
+                let off_x = rand::gen_range(-bounce_mag, bounce_mag);
+                let off_y = rand::gen_range(-bounce_mag, bounce_mag);
+                draw_texture_ex(&avatar.speak, center_x + off_x, center_y + off_y, WHITE, DrawTextureParams {
+                    dest_size: Some(avatar.speaksize.into()),
+                    ..Default::default()
+                });
+            }
+            TalkMode::MoveUp(mag) => {
+                let bounce_mag = vol.sqrt() * mag;
+                draw_texture_ex(&avatar.speak, center_x, center_y - bounce_mag, WHITE, DrawTextureParams {
+                    dest_size: Some(avatar.speaksize.into()),
+                    ..Default::default()
+                });
+            }
+            _ => {
+                draw_texture_ex(&avatar.speak, center_x, center_y, WHITE, DrawTextureParams {
+                    dest_size: Some(avatar.speaksize.into()),
+                    ..Default::default()
+                });
+            } 
+        }
+    } else {
+        let center_x = (1280. - avatar.idlesize.0) / 2.;
+        let center_y = (720. - avatar.idlesize.1) / 2.;
+        draw_texture_ex(&avatar.idle, center_x, center_y, WHITE, DrawTextureParams {
+            dest_size: Some(avatar.idlesize.into()),
+            ..Default::default()
+        });
+    }
+}
+
+fn write_settings(s: &Settings) {
+    let mut st = String::new();
+    st.push_str(&s.thresh.to_string());
+    st.push('\n');
+    st.push_str(&s.coyote_time.to_string());
+
+    let _ = std::fs::write("settings", &st);
 }
 
 #[macroquad::main(window_conf)]
@@ -264,6 +320,8 @@ async fn main() -> std::io::Result<()> {
     let mut textures: HashMap<String, Texture2D> = HashMap::new();
     let font = my_load_texture("misc_assets/letters.png".into(), &mut textures, FilterMode::Nearest).await.expect("should have");
     let back_button = my_load_texture("misc_assets/back.png".into(), &mut textures, FilterMode::Nearest).await.expect("should have");
+    let settings_button = my_load_texture("misc_assets/settings.png".into(), &mut textures, FilterMode::Nearest).await.expect("should have");
+    let arrow = my_load_texture("misc_assets/arrow.png".into(), &mut textures, FilterMode::Nearest).await.expect("should have");
 
     let selected_ind;
 
@@ -293,7 +351,11 @@ async fn main() -> std::io::Result<()> {
                 mouse_pos.1 > off_y + grid_size * grid_y as f32 && mouse_pos.1 < off_y + grid_size * (grid_y + 1) as f32 {
                 draw_rectangle(12. + grid_size * grid_x as f32, off_y + 8. + grid_size * grid_y as f32, 
                     grid_size - 24., grid_size - 24., Color::from_hex(0x494d64));
-                if is_mouse_button_pressed(MouseButton::Left) {
+                if is_mouse_button_down(MouseButton::Left) {
+                    draw_rectangle(12. + grid_size * grid_x as f32, off_y + 8. + grid_size * grid_y as f32, 
+                        grid_size - 24., grid_size - 24., Color::from_hex(0x181926));
+                }
+                if is_mouse_button_released(MouseButton::Left) {
                     selected_ind = i;
                     next_frame().await;
                     break 'outer
@@ -436,11 +498,26 @@ async fn main() -> std::io::Result<()> {
 
     let logo = my_load_texture("misc_assets/logo.png".into(), &mut textures, FilterMode::Nearest).await.expect("expect preshipped assets");
 
-    let settings = Settings {
+    let preexisting_settings = {
+        if let Ok(file) = std::fs::read_to_string("settings") {
+            let lines: Box<[&str]> = file.split("\n").collect();
+            if lines.len() < 2 { 
+                None
+            } else {
+                Some(Settings {
+                    thresh: lines[0].parse().unwrap(),
+                    coyote_time: lines[1].parse().unwrap(),
+                })
+            }
+        } else {
+            None
+        }
+    };
+
+    let mut settings = preexisting_settings.unwrap_or(Settings {
         thresh: 0.02,
         coyote_time: 0.05,
-        move_mod: 2.,
-    };
+    });
 
     let mut coyote_time = 0.;
 
@@ -457,26 +534,6 @@ async fn main() -> std::io::Result<()> {
 
                 *timer += dt;
 
-                // if is_key_pressed(KeyCode::Z) {
-                //     state = State::Main(working_paths[*ind].clone());
-                //     continue;
-                // }
-
-                // if is_key_pressed(KeyCode::Down) {
-                //     if *ind == working_paths.len() - 1 {
-                //         *ind = 0
-                //     } else {
-                //         *ind += 1
-                //     }
-                // }
-                // if is_key_pressed(KeyCode::Up) {
-                //     if *ind == 0 {
-                //         *ind = working_paths.len() - 1
-                //     } else {
-                //         *ind -= 1
-                //     }
-                // }
-                
                 let mouse_pos = mouse_position();
                 let off_y = 160.;
                 let grid_size = 128.;
@@ -496,7 +553,10 @@ async fn main() -> std::io::Result<()> {
                     if mouse_pos.0 > grid_size * grid_x as f32 && mouse_pos.0 < grid_size * (grid_x + 1) as f32 &&
                         mouse_pos.1 > off_y + grid_size * grid_y as f32 && mouse_pos.1 < off_y + grid_size * (grid_y + 1) as f32 {
                         draw_rectangle(12. + grid_size * grid_x as f32, off_y + 8. + grid_size * grid_y as f32, grid_size - 24., grid_size - 24., Color::from_hex(0x494d64));
-                        if is_mouse_button_pressed(MouseButton::Left) {
+                        if is_mouse_button_down(MouseButton::Left) {
+                            draw_rectangle(12. + grid_size * grid_x as f32, off_y + 8. + grid_size * grid_y as f32, grid_size - 24., grid_size - 24., Color::from_hex(0x181926));
+                        }
+                        if is_mouse_button_released(MouseButton::Left) {
                             state = State::Main(working_paths[i].clone());
                             show_ui = true;
                             next_frame().await;
@@ -525,6 +585,9 @@ async fn main() -> std::io::Result<()> {
                     let y= 16. + 16. * (0.7 * toff).sin() / toff;
                     draw_texture(&logo, x, y, Color::from_hex(*col));
                 }
+                if image_button(&settings_button, 1200., 16., 64., 64.) {
+                    state = State::Settings(None)
+                }
             }
             State::Main(ref avatar) => {
                 show_ui_thingy_timey += dt;
@@ -537,59 +600,67 @@ async fn main() -> std::io::Result<()> {
                     }
                 }
                 let vol = read_balls();
-                let avatar = avatars.get(avatar).expect("if this doesn't work i swear to fucking god");
-                clear_background(avatar.bgcol);
-                let mut should_speak = vol > settings.thresh;
-                if vol > settings.thresh {
-                    coyote_time = 0.;
-                } else if !should_speak && coyote_time < settings.coyote_time {
-                    should_speak = true;
-                    coyote_time += dt;
-                }
-                if should_speak {
-                    let center_x = (1280. - avatar.speaksize.0) / 2.;
-                    let center_y = (720. - avatar.speaksize.1) / 2.;
-                    match avatar.talkmode {
-                        TalkMode::Shake(mag) => {
-                            let bounce_mag = settings.move_mod * vol * mag;
-                            let off_x = rand::gen_range(-bounce_mag, bounce_mag);
-                            let off_y = rand::gen_range(-bounce_mag, bounce_mag);
-                            draw_texture_ex(&avatar.speak, center_x + off_x, center_y + off_y, WHITE, DrawTextureParams {
-                                dest_size: Some(avatar.speaksize.into()),
-                                ..Default::default()
-                            });
-                        }
-                        TalkMode::MoveUp(mag) => {
-                            let bounce_mag = settings.move_mod * vol * mag;
-                            draw_texture_ex(&avatar.speak, center_x, center_y - bounce_mag, WHITE, DrawTextureParams {
-                                dest_size: Some(avatar.speaksize.into()),
-                                ..Default::default()
-                            });
-                        }
-                        _ => {
-                            draw_texture_ex(&avatar.speak, center_x, center_y, WHITE, DrawTextureParams {
-                                dest_size: Some(avatar.speaksize.into()),
-                                ..Default::default()
-                            });
-                        } 
-                    }
-                } else {
-                    let center_x = (1280. - avatar.idlesize.0) / 2.;
-                    let center_y = (720. - avatar.idlesize.1) / 2.;
-                    draw_texture_ex(&avatar.idle, center_x, center_y, WHITE, DrawTextureParams {
-                        dest_size: Some(avatar.idlesize.into()),
-                        ..Default::default()
-                    });
+                {
+                    let avatar = avatars.get(avatar).expect("if this doesn't work i swear to fucking god");
+                    clear_background(avatar.bgcol);
+                    render_guy(&avatar, &settings, vol, &mut coyote_time, dt);
                 }
                 if show_ui {
                     draw_rectangle(0., 720. - 16., 1280., 16., Color::from_hex(0x181926));
-                    draw_rectangle(0., 720. - 16., 1280. * settings.thresh, 16., Color::from_hex(0xa5adcb));
-                    draw_rectangle(0., 720. - 16., 1280. * vol, 16., Color::from_hex(0xed8796));
+                    draw_rectangle(0., 720. - 16., 1280. * settings.thresh.sqrt(), 16., Color::from_hex(0xa5adcb));
+                    draw_rectangle(0., 720. - 16., 1280. * vol.sqrt(), 16., Color::from_hex(0xed8796));
                     if image_button(&back_button, 16., 16., 64., 64.) {
                         state = State::Select(0.)
+                    } else if image_button(&settings_button, 1200., 16., 64., 64.) {
+                        state = State::Settings(Some(avatar.clone()))
                     }
 
                     draw_text_cool_l(&font, "DOUBLE CLICK ANYWHERE TO HIDE/SHOW", 1280 - 2, 720 - 48, RED, 2);
+                }
+            }
+            State::Settings(ref avatar) => {
+                let vol = read_balls();
+                let mouse_pos = mouse_position();
+                if let Some(avatar) = avatar {
+                    let avatar = avatars.get(avatar).expect("if this doesn't work i swear to fucking god");
+                    clear_background(avatar.bgcol);
+                    render_guy(&avatar, &settings, vol, &mut coyote_time, dt);
+                    draw_rectangle(0., 0., 1280., 720., Color::from_rgba(30, 32, 48, 192));
+                } else {
+                    clear_background(Color::from_hex(0x1e2030));
+                }
+                draw_text_cool_c(&font, "SETTINGS", 640, 24, text_col, 3);
+                draw_rectangle(32., 32., 32., 656., Color::from_hex(0x24273a));
+                draw_rectangle(32., 32. + 656. * (1. - settings.thresh.sqrt()), 32., 656. * settings.thresh.sqrt(), Color::from_hex(0xa5adcb));
+                draw_rectangle(32., 32. + 656. * (1. - vol.sqrt()), 32., 656. * vol.sqrt(), Color::from_hex(0xed8796));
+                draw_rectangle(64., 32., 32., 656., Color::from_hex(0x181926));
+                draw_texture(&arrow, 64., 16. + 656. * (1. - settings.thresh.sqrt()), WHITE);
+                if mouse_pos.0 > 16. && mouse_pos.0 < 112. && mouse_pos.1 > 16. && mouse_pos.1 < 704. {
+                    if is_mouse_button_down(MouseButton::Left) {
+                        settings.thresh = (1.-(mouse_pos.1 - 32.) / 656.).clamp(0., 1.).powi(2);
+                    }
+                }
+                draw_text_cool(&font, "ADJUST MICROPHONE THRESHOLD", 104, 668, text_col, 1);
+                draw_text_cool_c(&font, "adjust release time", 768, 112, text_col, 2);
+                draw_text_cool_c(&font, "this is the amount of time the mic stays on before turning off", 768, 144, text_col, 1);
+                draw_text_cool_c(&font, "useful if your mic is noisy, or for sounds like 's' etc.", 768, 160, text_col, 1);
+                
+                draw_rectangle(384., 188., 768., 24., Color::from_hex(0x24273a));
+                draw_rectangle(384., 188., 768. * settings.coyote_time * 2., 24., Color::from_hex(0xed8796));
+                draw_text_cool_c(&font, &format!("currently {:.2}s", settings.coyote_time), 768, 220, text_col, 1);
+                if mouse_pos.0 > 368. && mouse_pos.0 < 1168. && mouse_pos.1 > 172. && mouse_pos.1 < 228. {
+                    if is_mouse_button_down(MouseButton::Left) {
+                        settings.coyote_time = ((mouse_pos.0 - 384.) / 768. / 2.).max(0.);
+                    }
+                }
+                
+                if image_button(&back_button, 1200., 16., 64., 64.) {
+                    write_settings(&settings);
+                    if let Some(avatar) = avatar {
+                        state = State::Main(avatar.clone())
+                    } else {
+                        state = State::Select(0.)
+                    }
                 }
             }
         }

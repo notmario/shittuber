@@ -1,3 +1,4 @@
 /target
 avatars/*
 !avatars/default
+settings
