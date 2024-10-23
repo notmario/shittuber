@@ -370,6 +370,8 @@ async fn main() -> std::io::Result<()> {
     let back_button = my_load_texture("misc_assets/back.png".into(), &mut textures, FilterMode::Nearest).await.expect("should have");
     let settings_button = my_load_texture("misc_assets/settings.png".into(), &mut textures, FilterMode::Nearest).await.expect("should have");
     let arrow = my_load_texture("misc_assets/arrow.png".into(), &mut textures, FilterMode::Nearest).await.expect("should have");
+    let idle_icon = my_load_texture("misc_assets/idle.png".into(), &mut textures, FilterMode::Nearest).await.expect("should have");
+    let speak_icon = my_load_texture("misc_assets/speak.png".into(), &mut textures, FilterMode::Nearest).await.expect("should have");
 
     let selected_ind;
 
@@ -549,8 +551,6 @@ async fn main() -> std::io::Result<()> {
     let mut working_paths: Vec<String> = avatars.keys().cloned().collect();
     working_paths.sort();
 
-    let mut state = State::Select(0.);
-
     let logo = my_load_texture("misc_assets/logo.png".into(), &mut textures, FilterMode::Nearest).await.expect("expect preshipped assets");
 
     let preexisting_settings = {
@@ -568,9 +568,15 @@ async fn main() -> std::io::Result<()> {
             None
         }
     };
+    
+    let mut state = if (&preexisting_settings).is_some() {
+        State::Select(0.)
+    } else {
+        State::Settings(None)
+    };
 
     let mut settings = preexisting_settings.unwrap_or(Settings {
-        thresh: 0.02,
+        thresh: 0.5,
         coyote_time: 0.05,
     });
 
@@ -683,6 +689,22 @@ async fn main() -> std::io::Result<()> {
                     draw_rectangle(0., 0., 1280., 720., Color::from_rgba(30, 32, 48, 192));
                 } else {
                     clear_background(Color::from_hex(0x1e2030));
+                    let mut should_speak = vol > settings.thresh;
+                    if vol > settings.thresh {
+                        coyote_time = 0.;
+                    } else if !should_speak && coyote_time < settings.coyote_time {
+                        should_speak = true;
+                        coyote_time += dt;
+                    }
+                    if should_speak {
+                        draw_texture(&speak_icon, 1152., 592., if coyote_time != 0. {
+                            RED
+                        } else {
+                            WHITE
+                        });
+                    } else {
+                        draw_texture(&idle_icon, 1152., 592., WHITE);
+                    }
                 }
                 draw_text_cool_c(&font, "SETTINGS", 640, 24, text_col, 3);
                 draw_rectangle(32., 32., 32., 656., Color::from_hex(0x24273a));
