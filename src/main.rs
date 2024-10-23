@@ -456,8 +456,7 @@ async fn main() -> std::io::Result<()> {
             continue
         }
 
-        let meta = std::fs::read_to_string(dir.join("meta.toml"));
-        let Ok(meta) = meta else { continue };
+        let meta = std::fs::read_to_string(dir.join("meta.toml")).unwrap_or("".into());
         let meta = meta.parse::<Table>();
         let Ok(meta) = meta else { continue };
 
