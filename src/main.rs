@@ -48,6 +48,7 @@ enum TalkMode {
     None,
     MoveUp(f32),
     Shake(f32),
+    Jump(f32, f32),
 }
 
 struct Avatar {
@@ -260,7 +261,7 @@ fn image_button(t: &Texture2D, x: f32, y: f32, w: f32, h: f32) -> bool {
     false
 }
 
-fn render_guy(avatar: &Avatar, settings: &Settings, vol: f32, coyote_time: &mut f32, dt: f32) {
+fn render_guy(avatar: &Avatar, settings: &Settings, vol: f32, coyote_time: &mut f32, dt: f32, data: &mut Vec<f32>) {
     let mut should_speak = vol > settings.thresh;
     if vol > settings.thresh {
         *coyote_time = 0.;
@@ -268,10 +269,35 @@ fn render_guy(avatar: &Avatar, settings: &Settings, vol: f32, coyote_time: &mut 
         should_speak = true;
         *coyote_time += dt;
     }
+    if let TalkMode::Jump(..) = avatar.talkmode {
+        if data.len() != 3 { *data = vec![0., 0., 0.] }
+    }
     if should_speak {
         let center_x = (1280. - avatar.speaksize.0) / 2.;
         let center_y = (720. - avatar.speaksize.1) / 2.;
         match avatar.talkmode {
+            TalkMode::Jump(mag, grav) => {
+                if data[1] != 0. {
+                    data[1] += data[0] / 2. * dt;
+                    data[0] += dt * grav;
+                    data[1] += data[0] / 2. * dt;
+                    if data[1] > 0. {
+                        data[1] = 0.;
+                        data[0] = 0.;
+                    }
+                }
+                if data[2] == 0. {
+                    data[2] = 1.;
+                    data[1] += -1.;
+                    // v^2 = 2as
+                    // v = sqrt(2as)
+                    data[0] += -(mag * grav * std::f32::consts::SQRT_2).sqrt();
+                }
+                draw_texture_ex(&avatar.speak, center_x, center_y + data[1], WHITE, DrawTextureParams {
+                    dest_size: Some(avatar.speaksize.into()),
+                    ..Default::default()
+                });
+            }
             TalkMode::Shake(mag) => {
                 let bounce_mag = vol.sqrt() * mag;
                 let off_x = rand::gen_range(-bounce_mag, bounce_mag);
@@ -298,10 +324,30 @@ fn render_guy(avatar: &Avatar, settings: &Settings, vol: f32, coyote_time: &mut 
     } else {
         let center_x = (1280. - avatar.idlesize.0) / 2.;
         let center_y = (720. - avatar.idlesize.1) / 2.;
-        draw_texture_ex(&avatar.idle, center_x, center_y, WHITE, DrawTextureParams {
-            dest_size: Some(avatar.idlesize.into()),
-            ..Default::default()
-        });
+        match avatar.talkmode {
+            TalkMode::Jump(..) => {
+                if data[1] != 0. {
+                    data[1] += data[0] / 2. * dt;
+                    data[0] += dt * 512.;
+                    data[1] += data[0] / 2. * dt;
+                    if data[1] > 0. {
+                        data[1] = 0.;
+                        data[0] = 0.;
+                    }
+                }
+                data[2] = 0.;
+                draw_texture_ex(&avatar.idle, center_x, center_y + data[1], WHITE, DrawTextureParams {
+                    dest_size: Some(avatar.idlesize.into()),
+                    ..Default::default()
+                });
+            }
+            _ => {
+                draw_texture_ex(&avatar.idle, center_x, center_y, WHITE, DrawTextureParams {
+                    dest_size: Some(avatar.idlesize.into()),
+                    ..Default::default()
+                });
+            }
+        }
     }
 }
 
@@ -446,6 +492,13 @@ async fn main() -> std::io::Result<()> {
                 let Ok(val) = val.parse() else { continue };
                 break TalkMode::MoveUp(val)
             }
+            if talkmode.starts_with("jump:") {
+                let val = talkmode.replace("jump:", "");
+                let mut vals = val.split(":");
+                let Ok(mag) = vals.next().expect("should have").parse() else { continue };
+                let Ok(grav) = vals.next().expect("should have").parse() else { continue };
+                break TalkMode::Jump(mag, grav)
+            }
             if talkmode.starts_with("shake:") {
                 let val = talkmode.replace("shake:", "");
                 let Ok(val) = val.parse() else { continue };
@@ -523,7 +576,7 @@ async fn main() -> std::io::Result<()> {
 
     let mut coyote_time = 0.;
 
-    // let mut move_data: Vec<f32> = vec![];
+    let mut move_data: Vec<f32> = vec![];
 
     let mut show_ui = true;
     let mut show_ui_thingy_timey = 0.;
@@ -605,7 +658,7 @@ async fn main() -> std::io::Result<()> {
                 {
                     let avatar = avatars.get(avatar).expect("if this doesn't work i swear to fucking god");
                     clear_background(avatar.bgcol);
-                    render_guy(&avatar, &settings, vol, &mut coyote_time, dt);
+                    render_guy(&avatar, &settings, vol, &mut coyote_time, dt, &mut move_data);
                 }
                 if show_ui {
                     draw_rectangle(0., 720. - 16., 1280., 16., Color::from_hex(0x181926));
@@ -626,7 +679,7 @@ async fn main() -> std::io::Result<()> {
                 if let Some(avatar) = avatar {
                     let avatar = avatars.get(avatar).expect("if this doesn't work i swear to fucking god");
                     clear_background(avatar.bgcol);
-                    render_guy(&avatar, &settings, vol, &mut coyote_time, dt);
+                    render_guy(&avatar, &settings, vol, &mut coyote_time, dt, &mut move_data);
                     draw_rectangle(0., 0., 1280., 720., Color::from_rgba(30, 32, 48, 192));
                 } else {
                     clear_background(Color::from_hex(0x1e2030));

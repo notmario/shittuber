@@ -1,6 +1,6 @@
 name = 'Default'
 bgcol = '00FF00'
-talkmode = 'shake:64'
+talkmode = 'jump:64:1024'
 idlesize = '512x512'
 speaksize = '512x512'
 filtermode = 'nearest'
