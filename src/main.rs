@@ -5,30 +5,32 @@ use std::collections::HashMap;
 use std::fs;
 use toml::Table;
 
-const BALLS_SIZE: usize = 2;
+// this is not in actual samples (Duh) but in whatever we get from cpal
+// uh maybe make this better(?)
+const BUFFER_SIZE: usize = 3;
 
-static mut BALLS: [f32; BALLS_SIZE] = [0.;BALLS_SIZE];
-static mut BALLSPOINT: usize = 0;
+static mut AUDIO_BUFFER: [f32; BUFFER_SIZE] = [0.;BUFFER_SIZE];
+static mut AUDIO_BUFFER_POINTER: usize = 0;
 
-fn add_to_balls(data: f32) {
+fn add_to_buffer(data: f32) {
     unsafe {
-        BALLS[BALLSPOINT] = data;
-        if BALLSPOINT < BALLS_SIZE - 1 {
-            BALLSPOINT += 1
+        AUDIO_BUFFER[AUDIO_BUFFER_POINTER] = data;
+        if AUDIO_BUFFER_POINTER < BUFFER_SIZE - 1 {
+            AUDIO_BUFFER_POINTER += 1
         } else {
-            BALLSPOINT = 0
+            AUDIO_BUFFER_POINTER = 0
         }
     }
 }
 
-fn read_balls() -> f32 {
+fn read_buffer() -> f32 {
     let mut sum = 0.;
     unsafe {
-        for dat in BALLS {
+        for dat in AUDIO_BUFFER {
             sum += dat
         }
     }
-    sum / BALLS_SIZE as f32
+    sum / BUFFER_SIZE as f32
 }
 
 enum State {
@@ -385,7 +387,7 @@ async fn main() -> std::io::Result<()> {
         move |data: &[f32], _: &cpal::InputCallbackInfo| {
             let sum: f32 = data.iter().map(|a| a.abs()).sum();
             let avg = sum / data.len() as f32;
-            add_to_balls(avg);
+            add_to_buffer(avg);
         },
         move |_| {
             // uh?
@@ -599,7 +601,7 @@ async fn main() -> std::io::Result<()> {
                         show_ui_thingy_timey = 0.;
                     }
                 }
-                let vol = read_balls();
+                let vol = read_buffer();
                 {
                     let avatar = avatars.get(avatar).expect("if this doesn't work i swear to fucking god");
                     clear_background(avatar.bgcol);
@@ -619,7 +621,7 @@ async fn main() -> std::io::Result<()> {
                 }
             }
             State::Settings(ref avatar) => {
-                let vol = read_balls();
+                let vol = read_buffer();
                 let mouse_pos = mouse_position();
                 if let Some(avatar) = avatar {
                     let avatar = avatars.get(avatar).expect("if this doesn't work i swear to fucking god");
