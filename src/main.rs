@@ -4,6 +4,10 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::collections::HashMap;
 use std::fs;
 use toml::Table;
+use global_hotkey::{GlobalHotKeyManager, hotkey::{HotKey, Modifiers}, GlobalHotKeyEvent};
+
+mod agony;
+use agony::mq_key_to_global_hotkey;
 
 // this is not in actual samples (Duh) but in whatever we get from cpal
 // uh maybe make this better(?)
@@ -11,6 +15,8 @@ const BUFFER_SIZE: usize = 3;
 
 static mut AUDIO_BUFFER: [f32; BUFFER_SIZE] = [0.;BUFFER_SIZE];
 static mut AUDIO_BUFFER_POINTER: usize = 0;
+
+static mut CURRENT_EMOTION: usize = 0;
 
 fn add_to_buffer(data: f32) {
     unsafe {
@@ -39,11 +45,25 @@ enum State {
     Settings(Option<String>),
 }
 
+#[derive(Debug)]
 struct Settings {
     thresh: f32,
     coyote_time: f32,
+    use_ctrl: bool,
+    use_shift: bool,
+    use_alt: bool,
+    hotkey_1: KeyCode,
+    hotkey_2: KeyCode,
+    hotkey_3: KeyCode,
+    hotkey_4: KeyCode,
+    hotkey_5: KeyCode,
+    hotkey_6: KeyCode,
+    hotkey_7: KeyCode,
+    hotkey_8: KeyCode,
+    hotkey_9: KeyCode,
 }
 
+#[derive(Debug)]
 enum TalkMode {
     None,
     MoveUp(f32),
@@ -51,13 +71,18 @@ enum TalkMode {
     Jump(f32, f32),
 }
 
-struct Avatar {
+#[derive(Debug)]
+struct Emotion {
     idle: Texture2D,
     idlesize: (f32, f32),
     speak: Texture2D,
     speaksize: (f32, f32),
-    bgcol: Color,
     talkmode: TalkMode,
+}
+
+struct Avatar {
+    emotions: Vec<Emotion>,
+    bgcol: Color,
 }
 
 /// initial window stuff
@@ -269,13 +294,16 @@ fn render_guy(avatar: &Avatar, settings: &Settings, vol: f32, coyote_time: &mut 
         should_speak = true;
         *coyote_time += dt;
     }
-    if let TalkMode::Jump(..) = avatar.talkmode {
+    let current_emotion = unsafe {CURRENT_EMOTION};
+    if let TalkMode::Jump(..) = avatar.emotions[current_emotion].talkmode {
         if data.len() != 3 { *data = vec![0., 0., 0.] }
+    } else {
+        *data = vec![];
     }
     if should_speak {
-        let center_x = (1280. - avatar.speaksize.0) / 2.;
-        let center_y = (720. - avatar.speaksize.1) / 2.;
-        match avatar.talkmode {
+        let center_x = (1280. - avatar.emotions[current_emotion].speaksize.0) / 2.;
+        let center_y = (720. - avatar.emotions[current_emotion].speaksize.1) / 2.;
+        match avatar.emotions[current_emotion].talkmode {
             TalkMode::Jump(mag, grav) => {
                 if data[1] != 0. {
                     data[1] += data[0] / 2. * dt;
@@ -293,8 +321,8 @@ fn render_guy(avatar: &Avatar, settings: &Settings, vol: f32, coyote_time: &mut 
                     // v = sqrt(2as)
                     data[0] += -(mag * grav * std::f32::consts::SQRT_2).sqrt();
                 }
-                draw_texture_ex(&avatar.speak, center_x, center_y + data[1], WHITE, DrawTextureParams {
-                    dest_size: Some(avatar.speaksize.into()),
+                draw_texture_ex(&avatar.emotions[current_emotion].speak, center_x, center_y + data[1], WHITE, DrawTextureParams {
+                    dest_size: Some(avatar.emotions[current_emotion].speaksize.into()),
                     ..Default::default()
                 });
             }
@@ -302,29 +330,29 @@ fn render_guy(avatar: &Avatar, settings: &Settings, vol: f32, coyote_time: &mut 
                 let bounce_mag = vol.sqrt() * mag;
                 let off_x = rand::gen_range(-bounce_mag, bounce_mag);
                 let off_y = rand::gen_range(-bounce_mag, bounce_mag);
-                draw_texture_ex(&avatar.speak, center_x + off_x, center_y + off_y, WHITE, DrawTextureParams {
-                    dest_size: Some(avatar.speaksize.into()),
+                draw_texture_ex(&avatar.emotions[current_emotion].speak, center_x + off_x, center_y + off_y, WHITE, DrawTextureParams {
+                    dest_size: Some(avatar.emotions[current_emotion].speaksize.into()),
                     ..Default::default()
                 });
             }
             TalkMode::MoveUp(mag) => {
                 let bounce_mag = vol.sqrt() * mag;
-                draw_texture_ex(&avatar.speak, center_x, center_y - bounce_mag, WHITE, DrawTextureParams {
-                    dest_size: Some(avatar.speaksize.into()),
+                draw_texture_ex(&avatar.emotions[current_emotion].speak, center_x, center_y - bounce_mag, WHITE, DrawTextureParams {
+                    dest_size: Some(avatar.emotions[current_emotion].speaksize.into()),
                     ..Default::default()
                 });
             }
             _ => {
-                draw_texture_ex(&avatar.speak, center_x, center_y, WHITE, DrawTextureParams {
-                    dest_size: Some(avatar.speaksize.into()),
+                draw_texture_ex(&avatar.emotions[current_emotion].speak, center_x, center_y, WHITE, DrawTextureParams {
+                    dest_size: Some(avatar.emotions[current_emotion].speaksize.into()),
                     ..Default::default()
                 });
             } 
         }
     } else {
-        let center_x = (1280. - avatar.idlesize.0) / 2.;
-        let center_y = (720. - avatar.idlesize.1) / 2.;
-        match avatar.talkmode {
+        let center_x = (1280. - avatar.emotions[current_emotion].idlesize.0) / 2.;
+        let center_y = (720. - avatar.emotions[current_emotion].idlesize.1) / 2.;
+        match avatar.emotions[current_emotion].talkmode {
             TalkMode::Jump(..) => {
                 if data[1] != 0. {
                     data[1] += data[0] / 2. * dt;
@@ -336,14 +364,14 @@ fn render_guy(avatar: &Avatar, settings: &Settings, vol: f32, coyote_time: &mut 
                     }
                 }
                 data[2] = 0.;
-                draw_texture_ex(&avatar.idle, center_x, center_y + data[1], WHITE, DrawTextureParams {
-                    dest_size: Some(avatar.idlesize.into()),
+                draw_texture_ex(&avatar.emotions[current_emotion].idle, center_x, center_y + data[1], WHITE, DrawTextureParams {
+                    dest_size: Some(avatar.emotions[current_emotion].idlesize.into()),
                     ..Default::default()
                 });
             }
             _ => {
-                draw_texture_ex(&avatar.idle, center_x, center_y, WHITE, DrawTextureParams {
-                    dest_size: Some(avatar.idlesize.into()),
+                draw_texture_ex(&avatar.emotions[current_emotion].idle, center_x, center_y, WHITE, DrawTextureParams {
+                    dest_size: Some(avatar.emotions[current_emotion].idlesize.into()),
                     ..Default::default()
                 });
             }
@@ -356,8 +384,53 @@ fn write_settings(s: &Settings) {
     st.push_str(&s.thresh.to_string());
     st.push('\n');
     st.push_str(&s.coyote_time.to_string());
+    st.push('\n');
+    let boole = |b| if b { "true" } else { "false" };
+    st.push_str(boole(s.use_ctrl));
+    st.push('\n');
+    st.push_str(boole(s.use_shift));
+    st.push('\n');
+    st.push_str(boole(s.use_alt));
+    st.push('\n');
+    // this one is fine actually
+    let wizard_shit = |k: KeyCode| -> u16 {unsafe {std::mem::transmute(k)}};
+    st.push_str(&wizard_shit(s.hotkey_1).to_string());
+    st.push('\n');
+    st.push_str(&wizard_shit(s.hotkey_2).to_string());
+    st.push('\n');
+    st.push_str(&wizard_shit(s.hotkey_3).to_string());
+    st.push('\n');
+    st.push_str(&wizard_shit(s.hotkey_4).to_string());
+    st.push('\n');
+    st.push_str(&wizard_shit(s.hotkey_5).to_string());
+    st.push('\n');
+    st.push_str(&wizard_shit(s.hotkey_6).to_string());
+    st.push('\n');
+    st.push_str(&wizard_shit(s.hotkey_7).to_string());
+    st.push('\n');
+    st.push_str(&wizard_shit(s.hotkey_8).to_string());
+    st.push('\n');
+    st.push_str(&wizard_shit(s.hotkey_9).to_string());
 
     let _ = std::fs::write("settings", &st);
+}
+
+fn reset_hotkeys(s: &Settings, manager: &GlobalHotKeyManager, prev_hotkeys: &[HotKey]) -> Vec<HotKey> {
+    let _ = manager.unregister_all(prev_hotkeys);
+    let mut new_hotkeys = vec![];
+    let mut mods: Modifiers = Modifiers::empty();
+    if s.use_ctrl { mods |= Modifiers::CONTROL };
+    if s.use_alt { mods |= Modifiers::ALT };
+    if s.use_shift { mods |= Modifiers::SHIFT };
+    for k in [
+        s.hotkey_1,s.hotkey_2,s.hotkey_3,s.hotkey_4,s.hotkey_5,s.hotkey_6,s.hotkey_7,s.hotkey_8,s.hotkey_9,
+    ] {
+        let real_key = mq_key_to_global_hotkey(k);
+        let hotkey = HotKey::new(Some(mods), real_key);
+        let _ = manager.register(hotkey);
+        new_hotkeys.push(hotkey);
+    }
+    new_hotkeys
 }
 
 #[macroquad::main(window_conf)]
@@ -369,9 +442,13 @@ async fn main() -> std::io::Result<()> {
     let font = my_load_texture("misc_assets/letters.png".into(), &mut textures, FilterMode::Nearest).await.expect("should have");
     let back_button = my_load_texture("misc_assets/back.png".into(), &mut textures, FilterMode::Nearest).await.expect("should have");
     let settings_button = my_load_texture("misc_assets/settings.png".into(), &mut textures, FilterMode::Nearest).await.expect("should have");
+    let emotion_button = my_load_texture("misc_assets/emotion.png".into(), &mut textures, FilterMode::Nearest).await.expect("should have");
     let arrow = my_load_texture("misc_assets/arrow.png".into(), &mut textures, FilterMode::Nearest).await.expect("should have");
     let idle_icon = my_load_texture("misc_assets/idle.png".into(), &mut textures, FilterMode::Nearest).await.expect("should have");
     let speak_icon = my_load_texture("misc_assets/speak.png".into(), &mut textures, FilterMode::Nearest).await.expect("should have");
+    let tick_on = my_load_texture("misc_assets/tickboxticked.png".into(), &mut textures, FilterMode::Nearest).await.expect("should have");
+    let tick_off = my_load_texture("misc_assets/tickboxempty.png".into(), &mut textures, FilterMode::Nearest).await.expect("should have");
+    let hkeybox = my_load_texture("misc_assets/hkeybox.png".into(), &mut textures, FilterMode::Nearest).await.expect("should have");
 
     let selected_ind;
 
@@ -470,14 +547,6 @@ async fn main() -> std::io::Result<()> {
             FilterMode::Linear
         };
 
-        let paths = ["idle.png", "speak.png"];
-        let mut imgs = vec![];
-        for path in paths {
-            let img = my_load_texture(dir.join(path).to_str().expect("should exist").into(), &mut textures, filtermode).await;
-            let Ok(img) = img else { continue };
-            imgs.push(img)
-        }
-
         let bgcol = if meta.contains_key("bgcol") {
             meta["bgcol"].as_str().unwrap_or("00FF00")
         } else {
@@ -486,67 +555,99 @@ async fn main() -> std::io::Result<()> {
         let bgcol = u32::from_str_radix(bgcol, 16);
         let Ok(bgcol) = bgcol else { continue };
 
-        let talkmode = if meta.contains_key("talkmode") {
-            meta["talkmode"].as_str().unwrap_or("none")
+        let k = meta.get("emotions");
+        println!("{:?}", k);
+        let emotions: Vec<_> = if let Some(emotions) = k {
+            emotions.as_array().expect("should be array").iter().map(|emotion| {
+                emotion.as_table().expect("should be table")
+            }).cloned().collect()
         } else {
-            "none"
-        };
-        let talkmode = loop {
-            if talkmode.starts_with("moveup:") {
-                let val = talkmode.replace("moveup:", "");
-                let Ok(val) = val.parse() else { continue };
-                break TalkMode::MoveUp(val)
-            }
-            if talkmode.starts_with("jump:") {
-                let val = talkmode.replace("jump:", "");
-                let mut vals = val.split(":");
-                let Ok(mag) = vals.next().expect("should have").parse() else { continue };
-                let Ok(grav) = vals.next().expect("should have").parse() else { continue };
-                break TalkMode::Jump(mag, grav)
-            }
-            if talkmode.starts_with("shake:") {
-                let val = talkmode.replace("shake:", "");
-                let Ok(val) = val.parse() else { continue };
-                break TalkMode::Shake(val)
-            }
-            break TalkMode::None
+            vec![toml::Table::new()]
         };
 
-        let idlesize = if meta.contains_key("idlesize") {
-            let s = meta["idlesize"].as_str().unwrap();
-            let mut zee = s.split("x");
-            (
-                zee.next().unwrap().parse().unwrap(),
-                zee.next().unwrap().parse().unwrap(),
-            )
-        } else {
-            (
-                imgs[0].size().x,
-                imgs[0].size().y,
-            )
-        };
+        let mut emotions_parsed = vec![];
 
-        let speaksize = if meta.contains_key("speaksize") {
-            let s = meta["speaksize"].as_str().unwrap();
-            let mut zee = s.split("x");
-            (
-                zee.next().unwrap().parse().unwrap(),
-                zee.next().unwrap().parse().unwrap(),
+        for (i, emotion) in emotions.iter().enumerate() {
+            println!("{:?}", emotion);
+            let thingy = if i == 0 { "".into() } else { (i+1).to_string() };
+            let paths = [format!("idle{}.png",thingy), format!("speak{}.png",thingy)];
+            let mut imgs = vec![];
+            for path in paths {
+                let img = my_load_texture(dir.join(path).to_str().expect("should exist").into(), &mut textures, filtermode).await;
+                let Ok(img) = img else { continue };
+                imgs.push(img)
+            }
+    
+            let talkmode = if emotion.contains_key("talkmode") {
+                emotion["talkmode"].as_str().unwrap_or("none")
+            } else {
+                "none"
+            };
+            let talkmode = loop {
+                if talkmode.starts_with("moveup:") {
+                    let val = talkmode.replace("moveup:", "");
+                    let Ok(val) = val.parse() else { continue };
+                    break TalkMode::MoveUp(val)
+                }
+                if talkmode.starts_with("jump:") {
+                    let val = talkmode.replace("jump:", "");
+                    let mut vals = val.split(":");
+                    let Ok(mag) = vals.next().expect("should have").parse() else { continue };
+                    let Ok(grav) = vals.next().expect("should have").parse() else { continue };
+                    break TalkMode::Jump(mag, grav)
+                }
+                if talkmode.starts_with("shake:") {
+                    let val = talkmode.replace("shake:", "");
+                    let Ok(val) = val.parse() else { continue };
+                    break TalkMode::Shake(val)
+                }
+                break TalkMode::None
+            };
+    
+            let idlesize = if emotion.contains_key("idlesize") {
+                let s = emotion["idlesize"].as_str().unwrap();
+                let mut zee = s.split("x");
+                (
+                    zee.next().unwrap().parse().unwrap(),
+                    zee.next().unwrap().parse().unwrap(),
+                )
+            } else {
+                (
+                    imgs[0].size().x,
+                    imgs[0].size().y,
+                )
+            };
+    
+            let speaksize = if emotion.contains_key("speaksize") {
+                let s = emotion["speaksize"].as_str().unwrap();
+                let mut zee = s.split("x");
+                (
+                    zee.next().unwrap().parse().unwrap(),
+                    zee.next().unwrap().parse().unwrap(),
+                )
+            } else {
+                (
+                    imgs[1].size().x,
+                    imgs[1].size().y,
+                )
+            };
+
+            emotions_parsed.push(
+                Emotion {
+                    idle: imgs[0].clone(),
+                    idlesize,
+                    speak: imgs[1].clone(),
+                    speaksize,
+                    talkmode,
+                }
             )
-        } else {
-            (
-                imgs[1].size().x,
-                imgs[1].size().y,
-            )
-        };
+        }
+
+        println!("{:?}", emotions_parsed);
 
         let avatar = Avatar {
-            idle: imgs[0].clone(),
-            idlesize,
-            speak: imgs[1].clone(),
-            speaksize,
+            emotions: emotions_parsed,
             bgcol: Color::from_hex(bgcol),
-            talkmode,
         };
 
         avatars.insert(dir.to_str().expect("should work").to_string(),avatar);
@@ -559,12 +660,31 @@ async fn main() -> std::io::Result<()> {
     let preexisting_settings = {
         if let Ok(file) = std::fs::read_to_string("settings") {
             let lines: Box<[&str]> = file.split("\n").collect();
-            if lines.len() < 2 { 
+            if lines.len() < 14 { 
                 None
             } else {
+                // Um. This is probably a Shit Idea but I Do Not Care at This Point
+                // if the User Fucks It Up That is Their Fucking Fault
+                let z = |k:u16| {
+                    unsafe {
+                        std::mem::transmute(k)
+                    }
+                };
                 Some(Settings {
                     thresh: lines[0].parse().unwrap(),
                     coyote_time: lines[1].parse().unwrap(),
+                    use_ctrl: lines[2] == "true",
+                    use_shift: lines[3] == "true",
+                    use_alt: lines[4] == "true",
+                    hotkey_1: z(lines[5].parse().unwrap()),
+                    hotkey_2: z(lines[6].parse().unwrap()),
+                    hotkey_3: z(lines[7].parse().unwrap()),
+                    hotkey_4: z(lines[8].parse().unwrap()),
+                    hotkey_5: z(lines[9].parse().unwrap()),
+                    hotkey_6: z(lines[10].parse().unwrap()),
+                    hotkey_7: z(lines[11].parse().unwrap()),
+                    hotkey_8: z(lines[12].parse().unwrap()),
+                    hotkey_9: z(lines[13].parse().unwrap()),
                 })
             }
         } else {
@@ -581,7 +701,21 @@ async fn main() -> std::io::Result<()> {
     let mut settings = preexisting_settings.unwrap_or(Settings {
         thresh: 0.5,
         coyote_time: 0.05,
+        use_ctrl: false,
+        use_shift: true,
+        use_alt: true,
+        hotkey_1: KeyCode::Key1,
+        hotkey_2: KeyCode::Key2,
+        hotkey_3: KeyCode::Key3,
+        hotkey_4: KeyCode::Key4,
+        hotkey_5: KeyCode::Key5,
+        hotkey_6: KeyCode::Key6,
+        hotkey_7: KeyCode::Key7,
+        hotkey_8: KeyCode::Key8,
+        hotkey_9: KeyCode::Key9,
     });
+
+    println!("{:?}", settings);
 
     let mut coyote_time = 0.;
 
@@ -589,6 +723,11 @@ async fn main() -> std::io::Result<()> {
 
     let mut show_ui = true;
     let mut show_ui_thingy_timey = 0.;
+
+    let mut listening_for_key: Option<usize> = None;
+
+    let manager = GlobalHotKeyManager::new().unwrap();
+    let mut hotkeys = reset_hotkeys(&settings, &manager, &[]);
 
     'outer: loop {
         let dt = get_frame_time();
@@ -622,12 +761,13 @@ async fn main() -> std::io::Result<()> {
                         }
                         if is_mouse_button_released(MouseButton::Left) {
                             state = State::Main(working_paths[i].clone());
+                            unsafe { CURRENT_EMOTION = 0 };
                             show_ui = true;
                             next_frame().await;
                             continue 'outer
                         }
                     }
-                    let t= &avatars[p].speak;
+                    let t= &avatars[p].emotions[unsafe { CURRENT_EMOTION }].speak;
                     draw_texture_ex(t, 32. + grid_size * grid_x as f32, off_y + 24. + grid_size * grid_y as f32, WHITE, DrawTextureParams {
                         dest_size: Some(Vec2 {
                             x: 64., y: 64.
@@ -655,6 +795,19 @@ async fn main() -> std::io::Result<()> {
             }
             State::Main(ref avatar) => {
                 show_ui_thingy_timey += dt;
+
+                if let Ok(event) = GlobalHotKeyEvent::receiver().try_recv() {
+                    if event.state == global_hotkey::HotKeyState::Pressed {
+                        let avatar = avatars.get(avatar).expect("if this doesn't work i swear to fucking god");
+                        for (i, hk) in hotkeys.iter().enumerate() {
+                            if i >= avatar.emotions.len() { break }
+                            if hk.id == event.id {
+                                unsafe { CURRENT_EMOTION = i }
+                            }
+                        }
+                    }
+                }
+                
                 if is_mouse_button_pressed(MouseButton::Left) {
                     if show_ui_thingy_timey < 0.25 {
                         show_ui = !show_ui;
@@ -673,6 +826,16 @@ async fn main() -> std::io::Result<()> {
                     draw_rectangle(0., 720. - 16., 1280., 16., Color::from_hex(0x181926));
                     draw_rectangle(0., 720. - 16., 1280. * settings.thresh.sqrt(), 16., Color::from_hex(0xa5adcb));
                     draw_rectangle(0., 720. - 16., 1280. * vol.sqrt(), 16., Color::from_hex(0xed8796));
+                    {
+                        let avatar = avatars.get(avatar).expect("if this doesn't work i swear to fucking god");
+                        for (i, _) in avatar.emotions.iter().enumerate() {
+                            if image_button(&emotion_button, 1200., 16. + 80. * (1 + i) as f32, 64., 64.) {
+                                unsafe { CURRENT_EMOTION = i }
+                            }
+                            draw_text_cool_c(&font, &(i + 1).to_string(), 1232, 16 + 80 * (1 + i) as i32, Color::from_hex(0xed8796), 4);
+                        }
+                    }
+
                     if image_button(&back_button, 16., 16., 64., 64.) {
                         state = State::Select(0.)
                     } else if image_button(&settings_button, 1200., 16., 64., 64.) {
@@ -683,6 +846,36 @@ async fn main() -> std::io::Result<()> {
                 }
             }
             State::Settings(ref avatar) => {
+                if let Some(ind) = listening_for_key {
+                    clear_background(Color::from_hex(0x000000));
+                    draw_text_cool_c(&font, &format!("LISTENING FOR KEY {}", ind), 640, 320, text_col, 5);
+                    for k in get_keys_pressed() {
+                        if k == KeyCode::Escape {
+                            listening_for_key = None;
+                            next_frame().await;
+                            continue
+                        }
+                        if k != KeyCode::LeftControl && k != KeyCode::RightControl && k != KeyCode::LeftAlt && k != KeyCode::RightAlt && k != KeyCode::LeftShift && k != KeyCode::RightShift {
+                            listening_for_key = None;
+                            next_frame().await;
+                            match ind {
+                                1 => settings.hotkey_1 = k,
+                                2 => settings.hotkey_2 = k,
+                                3 => settings.hotkey_3 = k,
+                                4 => settings.hotkey_4 = k,
+                                5 => settings.hotkey_5 = k,
+                                6 => settings.hotkey_6 = k,
+                                7 => settings.hotkey_7 = k,
+                                8 => settings.hotkey_8 = k,
+                                9 => settings.hotkey_9 = k,
+                                _ => ()
+                            }
+                            continue
+                        }
+                    }
+                    next_frame().await;
+                    continue
+                }
                 let vol = read_buffer();
                 let mouse_pos = mouse_position();
                 if let Some(avatar) = avatar {
@@ -734,8 +927,44 @@ async fn main() -> std::io::Result<()> {
                     }
                 }
                 
+                draw_text_cool_c(&font, "HOT KEYS", 640, 300, text_col, 2);
+                draw_text_cool_c(&font, "to change Your Emotion", 640, 336, text_col, 1);
+                draw_text_cool_c(&font, "ctrl", 400, 360, text_col, 1);
+                if image_button(if settings.use_ctrl { &tick_on } else { &tick_off }, 384., 380., 32., 32.) {
+                    settings.use_ctrl = !settings.use_ctrl;
+                }
+                draw_text_cool_c(&font, "alt", 400, 420, text_col, 1);
+                if image_button(if settings.use_alt { &tick_on } else { &tick_off }, 384., 440., 32., 32.) {
+                    settings.use_alt = !settings.use_alt;
+                }
+                draw_text_cool_c(&font, "shift", 400, 480, text_col, 1);
+                if image_button(if settings.use_shift { &tick_on } else { &tick_off }, 384., 500., 32., 32.) {
+                    settings.use_shift = !settings.use_shift;
+                }
+                let offy = 380.;
+                for (i, val) in [
+                    settings.hotkey_1,
+                    settings.hotkey_2,
+                    settings.hotkey_3,
+                    settings.hotkey_4,
+                    settings.hotkey_5,
+                    settings.hotkey_6,
+                    settings.hotkey_7,
+                    settings.hotkey_8,
+                    settings.hotkey_9,
+                ].iter().enumerate() {
+                    let x = i % 3;
+                    let y= i / 3;
+                    if image_button(&hkeybox, 512. + x as f32 * 128., offy + y as f32 * 52., 96., 32.) {
+                        listening_for_key = Some(i+1)
+                    }
+                    draw_text_cool_c(&font, &format!("#{:?}", i+1), 560 + x as i32 * 128, offy as i32 - 18 + y as i32 * 52, text_col, 1);
+                    draw_text_cool_c(&font, &format!("{:?}", val), 560 + x as i32 * 128, offy as i32 + 8 + y as i32 * 52, text_col, 1);
+                }
+                
                 if image_button(&back_button, 1200., 16., 64., 64.) {
                     write_settings(&settings);
+                    hotkeys = reset_hotkeys(&settings, &manager, &hotkeys);
                     if let Some(avatar) = avatar {
                         state = State::Main(avatar.clone())
                     } else {

@@ -5,5 +5,6 @@ edition = "2021"
 
 [dependencies]
 cpal = "0.15.3"
+global-hotkey = "0.6.2"
 macroquad = "0.4.13"
 toml = "0.8.19"
